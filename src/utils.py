@@ -8,6 +8,13 @@ CALENDAR_URL_DISTRICT = "https://cdn-api.co-vin.in/api/v2/appointment/sessions/c
 CALENDAR_URL_PINCODE = "https://cdn-api.co-vin.in/api/v2/appointment/sessions/calendarByPin?pincode={0}&date={1}"
 WARNING_BEEP_DURATION = (1000, 2000)
 
+from twilio.rest import Client
+
+sid = "enter ur sid"
+token = "enter ur token"
+PHONE_NUMBER = "number here"
+TWILIO_NUMBER = "twilio number here"
+
 try:
     import winsound
 
@@ -38,7 +45,8 @@ def viable_options(resp, minimum_slots, min_age_booking):
                         'available': session['available_capacity'],
                         'date': session['date'],
                         'slots': session['slots'],
-                        'session_id': session['session_id']
+                        'session_id': session['session_id'],
+                        'min_age_limit': session['min_age_limit']
                     }
                     options.append(out)
 
@@ -60,6 +68,7 @@ def display_table(dict_list):
     header = ['idx'] + list(dict_list[0].keys())
     rows = [[idx + 1] + list(x.values()) for idx, x in enumerate(dict_list)]
     print(tabulate.tabulate(rows, header, tablefmt='grid'))
+    return tabulate.tabulate(rows, header, tablefmt='simple')
 
 
 def check_calendar_by_district(request_header, vaccine_type, location_dtls, start_date, minimum_slots, min_age_booking):
@@ -81,6 +90,8 @@ def check_calendar_by_district(request_header, vaccine_type, location_dtls, star
         options = []
         for location in location_dtls:
             resp = requests.get(base_url.format(location['district_id'], start_date), headers=request_header)
+            print(request_header)
+            print(resp.json())
 
             if resp.status_code == 401:
                 print('TOKEN INVALID')
@@ -126,27 +137,18 @@ def check_calendar_by_pincode(request_header, vaccine_type, location_dtls, start
             resp = requests.get(base_url.format(location['pincode'], start_date), headers=request_header)
 
             if resp.status_code == 401:
-                print('TOKEN INVALID')
-                return False
+                print('Could not retrieve list from server....')
 
             elif resp.status_code == 200:
                 resp = resp.json()
                 print(f"Centers available in {location['pincode']} from {start_date} as of {today.strftime('%Y-%m-%d %H:%M:%S')}: {len(resp['centers'])}")
                 options += viable_options(resp, minimum_slots, min_age_booking)
 
-            else:
-                pass
-
-        for location in location_dtls:
-            if int(location['pincode']) in [option['pincode'] for option in options]:
-                for _ in range(2):
-                    beep(location['alert_freq'], 150)
-
         return options
 
     except Exception as e:
         print(str(e))
-        beep(WARNING_BEEP_DURATION[0], WARNING_BEEP_DURATION[1])
+        # beep(WARNING_BEEP_DURATION[0], WARNING_BEEP_DURATION[1])
 
 
 def book_appointment(request_header, details):
@@ -183,7 +185,7 @@ def book_appointment(request_header, details):
         beep(WARNING_BEEP_DURATION[0], WARNING_BEEP_DURATION[1])
 
 
-def check_and_book(request_header, beneficiary_dtls, location_dtls, search_option, **kwargs):
+def check_and_book(request_header, location_dtls, search_option, **kwargs):
     """
     This function
         1. Checks the vaccination calendar for available slots,
@@ -193,28 +195,15 @@ def check_and_book(request_header, beneficiary_dtls, location_dtls, search_optio
         5. Returns True or False depending on Token Validity
     """
     try:
-        min_age_booking = get_min_age(beneficiary_dtls)
-
+        min_age_booking = kwargs['min_age_booking']
         minimum_slots = kwargs['min_slots']
         refresh_freq = kwargs['ref_freq']
-        auto_book = kwargs['auto_book']
-        start_date = kwargs['start_date']
         vaccine_type = kwargs['vaccine_type']
+        
+        # start from next day
+        start_date = (datetime.datetime.today() + datetime.timedelta(days=1)).strftime("%d-%m-%Y")
 
-        if isinstance(start_date, int) and start_date == 2:
-            start_date = (datetime.datetime.today() + datetime.timedelta(days=1)).strftime("%d-%m-%Y")
-        elif isinstance(start_date, int) and start_date == 1:
-            start_date = datetime.datetime.today().strftime("%d-%m-%Y")
-        else:
-            pass
-
-        if search_option == 2:
-            options = check_calendar_by_district(request_header, vaccine_type, location_dtls, start_date, minimum_slots, min_age_booking)
-        else:
-            options = check_calendar_by_pincode(request_header, vaccine_type, location_dtls, start_date, minimum_slots, min_age_booking)
-
-        if isinstance(options, bool):
-            return False
+        options = check_calendar_by_pincode(request_header, vaccine_type, location_dtls, start_date, minimum_slots, min_age_booking)
 
         options = sorted(options,
                          key=lambda k: (k['district'].lower(), k['pincode'],
@@ -230,51 +219,36 @@ def check_and_book(request_header, beneficiary_dtls, location_dtls, search_optio
                 item.pop('center_id', None)
                 cleaned_options_for_display.append(item)
 
+            # print(tmp_options[0])
             display_table(cleaned_options_for_display)
-            if auto_book == 'yes-please':
-                print("AUTO-BOOKING IS ENABLED. PROCEEDING WITH FIRST CENTRE, DATE, and SLOT.")
-                choice = '1.1'
-            else:
-                choice = inputimeout(
-                    prompt='----------> Wait 20 seconds for updated options OR \n----------> Enter a choice e.g: 1.4 for (1st center 4th slot): ',
-                    timeout=20)
+            body = "VACCINE ALERT !!! \n"
+            centre_slots = [(item["name"], item["date"], item["min_age_limit"], item["available"]) for item in tmp_options]
+            for x in centre_slots:
+                body += str(x) + "\n" 
+            # print(cleaned_options_for_display)
+            print(body)
 
+            # send message here if u want
+            client = Client(sid, token)
+            msg = client.messages.create(
+                to = PHONE_NUMBER,
+                from_ = TWILIO_NUMBER,
+                body = body
+            )
+
+            # print(msg)
         else:
-            for i in range(refresh_freq, 0, -1):
-                msg = f"No viable options. Next update in {i} seconds.."
-                print(msg, end="\r", flush=True)
-                sys.stdout.flush()
-                time.sleep(1)
-            choice = '.'
+            print("No viable option found.... :(")
+
+        
+        for i in range(refresh_freq, 0, -1):
+            msg = f"Next update in {i} seconds.."
+            print(msg, end="\r", flush=True)
+            sys.stdout.flush()
+            time.sleep(1)
 
     except TimeoutOccurred:
         time.sleep(1)
-        return True
-
-    else:
-        if choice == '.':
-            return True
-        else:
-            try:
-                choice = choice.split('.')
-                choice = [int(item) for item in choice]
-                print(f'============> Got Choice: Center #{choice[0]}, Slot #{choice[1]}')
-
-                new_req = {
-                    'beneficiaries': [beneficiary['beneficiary_reference_id'] for beneficiary in beneficiary_dtls],
-                    'dose': 2 if vaccine_type else 1,
-                    'center_id' : options[choice[0] - 1]['center_id'],
-                    'session_id': options[choice[0] - 1]['session_id'],
-                    'slot'      : options[choice[0] - 1]['slots'][choice[1] - 1]
-                }
-
-                print(f'Booking with info: {new_req}')
-                return book_appointment(request_header, new_req)
-
-            except IndexError:
-                print("============> Invalid Option!")
-                os.system("pause")
-                pass
 
 
 def get_vaccine_preference():

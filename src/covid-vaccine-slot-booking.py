@@ -16,65 +16,63 @@ def main():
             'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/39.0.2171.95 Safari/537.36'
         }
 
-        if args.token:
-            token = args.token
-        else:
-            mobile = input("Enter the registered mobile number: ")
-            token = generate_token_OTP(mobile, base_request_header)
+        # if args.token:
+        #     token = args.token
+        # else:
+        #     mobile = input("Enter the registered mobile number: ")
+        #     token = generate_token_OTP(mobile, base_request_header)
 
         request_header = copy.deepcopy(base_request_header)
-        request_header["Authorization"] = f"Bearer {token}"
+        # request_header["Authorization"] = f"Bearer {token}"
 
         # Get Beneficiaries
-        print("Fetching registered beneficiaries.. ")
-        beneficiary_dtls = get_beneficiaries(request_header)
+        # print("Fetching registered beneficiaries.. ")
+        # beneficiary_dtls = get_beneficiaries(request_header)
 
-        if len(beneficiary_dtls) == 0:
-            print("There should be at least one beneficiary. Exiting.")
-            os.system("pause")
-            sys.exit(1)
+        # if len(beneficiary_dtls) == 0:
+        #     print("There should be at least one beneficiary. Exiting.")
+        #     os.system("pause")
+        #     sys.exit(1)
 
         # Make sure all beneficiaries have the same type of vaccine
-        vaccine_types = [beneficiary['vaccine'] for beneficiary in beneficiary_dtls]
-        vaccines = Counter(vaccine_types)
+        # vaccine_types = [beneficiary['vaccine'] for beneficiary in beneficiary_dtls]
+        # vaccines = Counter(vaccine_types)
 
-        if len(vaccines.keys()) != 1:
-            print(f"All beneficiaries in one attempt should have the same vaccine type. Found {len(vaccines.keys())}")
-            os.system("pause")
-            sys.exit(1)
+        # if len(vaccines.keys()) != 1:
+        #     print(f"All beneficiaries in one attempt should have the same vaccine type. Found {len(vaccines.keys())}")
+        #     os.system("pause")
+        #     sys.exit(1)
 
-        vaccine_type = vaccine_types[0]
-        if not vaccine_type:
-            print("\n================================= Vaccine Info =================================\n")
-            vaccine_type = get_vaccine_preference()
+        vaccine_type = 0
+        # if not vaccine_type:
+        #     print("\n================================= Vaccine Info =================================\n")
+        #     vaccine_type = get_vaccine_preference()
 
-        print("\n================================= Location Info =================================\n")
-        # get search method to use
-        search_option = input("""Search by Pincode? Or by State/District? \nEnter 1 for Pincode or 2 for State/District. (Default 2) : """)
-        search_option = int(search_option) if int(search_option) in [1, 2] else 2
+        # print("\n================================= Location Info =================================\n")
+        # # get search method to use
+        # search_option = input("""Search by Pincode? Or by State/District? \nEnter 1 for Pincode or 2 for State/District. (Default 2) : """)
+        # search_option = int(search_option) if int(search_option) in [1, 2] else 2
 
-        if search_option == 2:
+        # if search_option == 2:
+        #     # Collect vaccination center preferance
+        #     location_dtls = get_districts(request_header)
+        # else:
             # Collect vaccination center preferance
-            location_dtls = get_districts(request_header)
-
-        else:
-            # Collect vaccination center preferance
-            location_dtls = get_pincodes()
+        search_option = 1
+        location_dtls = get_pincodes()
 
         print("\n================================= Additional Info =================================\n")
 
         # Set filter condition
-        minimum_slots = input(f'Filter out centers with availability less than ? Minimum {len(beneficiary_dtls)} : ')
-        if minimum_slots:
-            minimum_slots = int(minimum_slots) if int(minimum_slots) >= len(beneficiary_dtls) else len(beneficiary_dtls)
-        else:
-            minimum_slots = len(beneficiary_dtls)
+        minimum_slots = int(input("What is min number of slots u need ?"))
+
+        min_age_booking = int(input("Enter age group, 18 or 45: "))
 
         # Get refresh frequency
         refresh_freq = input('How often do you want to refresh the calendar (in seconds)? Default 15. Minimum 5. : ')
-        refresh_freq = int(refresh_freq) if refresh_freq and int(refresh_freq) >= 5 else 15
+        refresh_freq = int(refresh_freq) if refresh_freq and int(refresh_freq) >= 5 else 600
 
-        # Get search start date
+        
         start_date = input('Search for next seven day starting from when?\nUse 1 for today, 2 for tomorrow, or provide a date in the format yyyy-mm-dd. Default 2: ')
         if not start_date:
             start_date = 2
@@ -86,51 +84,16 @@ def main():
             except ValueError:
                 start_date = 2
 
-        print("\n=========== CAUTION! =========== CAUTION! CAUTION! =============== CAUTION! =======\n")
-        print(" ==== BE CAREFUL WITH THIS OPTION! AUTO-BOOKING WILL BOOK THE FIRST AVAILABLE CENTRE, DATE, AND SLOT! ==== ")
-        auto_book = input("Do you want to enable auto-booking? (yes-please or no): ")
-
         token_valid = True
         while token_valid:
             request_header = copy.deepcopy(base_request_header)
-            request_header["Authorization"] = f"Bearer {token}"
-
             # call function to check and book slots
-            token_valid = check_and_book(request_header, beneficiary_dtls, location_dtls, search_option,
+            check_and_book(request_header, location_dtls, search_option,
                                          min_slots=minimum_slots,
                                          ref_freq=refresh_freq,
-                                         auto_book=auto_book,
                                          start_date=start_date,
-                                         vaccine_type=vaccine_type)
-
-            # check if token is still valid
-            beneficiaries_list = requests.get(BENEFICIARIES_URL, headers=request_header)
-            if beneficiaries_list.status_code == 200:
-                token_valid = True
-
-            else:
-                # if token invalid, regenerate OTP and new token
-                beep(WARNING_BEEP_DURATION[0], WARNING_BEEP_DURATION[1])
-                print('Token is INVALID.')
-                token_valid = False
-
-                tryOTP = input('Try for a new Token? (y/n): ')
-                if tryOTP.lower() == 'y':
-                    if mobile:
-                        tryOTP = input(f"Try for OTP with mobile number {mobile}? (y/n) : ")
-                        if tryOTP.lower() == 'y':
-                            token = generate_token_OTP(mobile, base_request_header)
-                            token_valid = True
-                        else:
-                            token_valid = False
-                            print("Exiting")
-                    else:
-                        mobile = input(f"Enter 10 digit mobile number for new OTP generation? : ")
-                        token = generate_token_OTP(mobile, base_request_header)
-                        token_valid = True
-                else:
-                    print("Exiting")
-                    os.system("pause")
+                                         vaccine_type=vaccine_type,
+                                         min_age_booking=min_age_booking)
 
     except Exception as e:
         print(str(e))
